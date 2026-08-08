@@ -1,116 +1,175 @@
-import React, { useMemo, useState } from 'react';
-import { useThemeStore, WallpaperState } from '../stores/themeStore';
+import React, { useEffect, useState } from 'react';
+import { useThemeStore } from '../stores/themeStore';
 
-const defaultWallpaperUrl = new URL('../assets/wallpapers/default-wallpaper.mp4', import.meta.url).href;
+interface QuickDial {
+  id: string;
+  title: string;
+  url: string;
+}
 
-const isUrl = (value: string) => /^(https?:)?\/\//i.test(value);
-const isVideoUrl = (value: string) => /\.(mp4|webm)(\?.*)?$/i.test(value);
-
-const determineSource = (wallpaper: WallpaperState) => {
-  if (wallpaper.type === 'default') {
-    return defaultWallpaperUrl;
-  }
-
-  if (!wallpaper.source) {
-    return defaultWallpaperUrl;
-  }
-
-  return wallpaper.source;
-};
+const CLOCK_KEY = 'vortex-clock-24';
+const QUICKDIAL_KEY = 'vortex-quickdials';
 
 const NewTabPage: React.FC = () => {
-  const wallpaper = useThemeStore((state) => state.wallpaper);
-  const [query, setQuery] = useState('');
+  const wallpaper = useThemeStore((s) => s.wallpaper);
+  const setWallpaper = useThemeStore((s) => s.setWallpaper);
+  const setWallpaperSource = useThemeStore((s) => s.setWallpaperSource);
 
-  const backgroundSource = determineSource(wallpaper);
-  const isVideo = wallpaper.type === 'default' ? true : wallpaper.isVideo || isVideoUrl(wallpaper.source);
-
-  const destination = useMemo(() => {
-    const trimmed = query.trim();
-    if (!trimmed) return '';
-    if (isUrl(trimmed)) {
-      return trimmed.startsWith('http') ? trimmed : `https://${trimmed}`;
+  const [clock24, setClock24] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(CLOCK_KEY) === '1';
+    } catch {
+      return false;
     }
-    return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`;
-  }, [query]);
+  });
 
-  const handleSearch = () => {
-    if (!destination) return;
-    window.open(destination, '_blank');
+  const [query, setQuery] = useState('');
+  const [quickDials, setQuickDials] = useState<QuickDial[]>(() => {
+    try {
+      const raw = localStorage.getItem(QUICKDIAL_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CLOCK_KEY, clock24 ? '1' : '0');
+    } catch {}
+  }, [clock24]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(QUICKDIAL_KEY, JSON.stringify(quickDials));
+    } catch {}
+  }, [quickDials]);
+
+  const addQuickDial = (title: string, url: string) => {
+    const d: QuickDial = { id: `qd-${Date.now()}`, title, url };
+    setQuickDials((s) => [d, ...s]);
+  };
+
+  const removeQuickDial = (id: string) => setQuickDials((s) => s.filter((d) => d.id !== id));
+
+  const handleFile = async (file?: File) => {
+    if (!file) return;
+    const isVideo = /\.(mp4|webm)$/i.test(file.name);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      setWallpaperSource(result, isVideo);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleUrlSet = (url: string) => {
+    const isVideo = /\.(mp4|webm)(\?.*)?$/i.test(url);
+    setWallpaperSource(url, isVideo);
+  };
+
+  const formatClock = (d: Date) => {
+    const h = d.getHours();
+    const m = d.getMinutes().toString().padStart(2, '0');
+    if (clock24) return `${h}:${m}`;
+    const hh = ((h + 11) % 12) + 1;
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    return `${hh}:${m} ${ampm}`;
   };
 
   return (
-    <div className="relative h-full w-full overflow-hidden text-slate-100">
-      <div className="absolute inset-0">
-        {isVideo ? (
-          <video
-            className="h-full w-full object-cover"
-            src={backgroundSource}
-            autoPlay
-            muted={wallpaper.mute}
-            loop={wallpaper.loop}
-            playsInline
-          />
+    <div className="relative h-full w-full overflow-hidden text-white">
+      {/* Wallpaper */}
+      <div className="absolute inset-0 -z-10">
+        {wallpaper.url ? (
+          wallpaper.isVideo ? (
+            <video src={wallpaper.url} autoPlay muted={wallpaper.mute} loop={wallpaper.loop} playsInline className="h-full w-full object-cover" />
+          ) : (
+            <img src={wallpaper.url} alt="wallpaper" className="h-full w-full object-cover" />
+          )
         ) : (
-          <img className="h-full w-full object-cover" src={backgroundSource} alt="New Tab Wallpaper" />
+          <img src={new URL('../assets/wallpapers/default-wallpaper.png', import.meta.url).href} alt="default wallpaper" className="h-full w-full object-cover" />
         )}
-
-        <div
-          className="absolute inset-0 bg-slate-950/30"
-          style={{ backdropFilter: `blur(${wallpaper.blur}px)` }}
-        />
-        <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-slate-950/20" />
+        <div className="absolute inset-0" style={{ backdropFilter: `blur(${wallpaper.blur}px)` }} />
+        <div className="absolute inset-0 bg-black" style={{ opacity: wallpaper.vignette / 100 }} />
       </div>
 
-      <div className="relative z-10 flex min-h-full flex-col items-center justify-center px-6 py-12">
-        <div className="w-full max-w-4xl rounded-[32px] border border-white/10 bg-slate-950/70 p-10 shadow-2xl backdrop-blur-2xl">
-          <div className="mb-6 flex items-center justify-between gap-4">
+      <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[min(820px,94%)]">
+        <div className="mx-auto w-full rounded-2xl border border-white/10 bg-black/40 backdrop-blur-xl p-6">
+          <div className="flex items-center justify-between">
             <div>
-              <p className="text-sm uppercase tracking-[0.35em] text-slate-400">Vortex New Tab</p>
-              <h1 className="mt-3 text-4xl font-semibold text-white">Your workspace, your wallpaper.</h1>
+              <h2 className="text-xl font-semibold">Search</h2>
+              <p className="text-sm text-slate-300">Fast, private, and customizable</p>
             </div>
-            <div className="rounded-3xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
-              {wallpaper.type === 'default' ? 'Default wallpaper' : wallpaper.type === 'url' ? 'Remote wallpaper' : 'Local wallpaper'}
+            <div className="text-right">
+              <div className="text-2xl font-medium">{formatClock(new Date())}</div>
+              <div className="text-xs text-slate-300 mt-1">{new Date().toLocaleDateString()}</div>
             </div>
           </div>
 
-          <div className="space-y-6">
-            <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6 shadow-inner shadow-black/20">
-              <p className="mb-3 text-sm text-slate-300">Search instantly or paste a video/image URL.</p>
-              <div className="flex flex-col gap-3 sm:flex-row">
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search or enter address"
-                  className="flex-1 rounded-3xl border border-slate-700 bg-slate-950/90 px-4 py-3 text-base text-slate-100 outline-none transition focus:border-slate-400 focus:ring-2 focus:ring-slate-500"
-                />
-                <button
-                  type="button"
-                  onClick={handleSearch}
-                  className="inline-flex shrink-0 items-center justify-center rounded-3xl bg-violet-500 px-6 py-3 text-base font-semibold text-white transition hover:bg-violet-400"
-                >
-                  Search
-                </button>
+          <form onSubmit={(e) => { e.preventDefault(); const url = query.trim(); if (!url) return; window.open(url.startsWith('http') ? url : `https://${url}`, '_blank'); setQuery(''); }} className="mt-4 flex gap-3">
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search or enter address" className="flex-1 rounded-full bg-black/20 px-4 py-3 text-sm text-white outline-none" />
+            <button type="submit" className="rounded-full bg-[color:var(--vortex-accent-color)] px-4 py-2 text-sm font-medium text-black">Search</button>
+          </form>
+
+          <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="space-y-2">
+              <label className="text-xs text-slate-300">Upload Wallpaper</label>
+              <input type="file" accept="image/*,video/mp4,video/webm" onChange={(e) => handleFile(e.target.files?.[0])} />
+              <div className="mt-2 flex items-center gap-2">
+                <input type="text" placeholder="Or paste image/video URL" className="flex-1 rounded-md bg-black/20 px-3 py-2 text-sm" onBlur={(e) => handleUrlSet(e.target.value)} />
               </div>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-3">
-              <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-5">
-                <p className="text-sm text-slate-400">Wallpaper type</p>
-                <p className="mt-3 text-lg font-medium text-white">{isVideo ? 'Video' : 'Image'}</p>
+            <div className="space-y-2">
+              <label className="text-xs text-slate-300">Backdrop Blur ({wallpaper.blur}px)</label>
+              <input type="range" min={0} max={25} value={wallpaper.blur} onChange={(e) => setWallpaper({ blur: Number(e.target.value) })} />
+              <label className="text-xs text-slate-300">Vignette ({wallpaper.vignette}%)</label>
+              <input type="range" min={0} max={80} value={wallpaper.vignette} onChange={(e) => setWallpaper({ vignette: Number(e.target.value) })} />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs text-slate-300">Playback</label>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setWallpaper({ mute: !wallpaper.mute })} className="rounded-md bg-white/5 px-3 py-1">{wallpaper.mute ? 'Muted' : 'Sound On'}</button>
+                <button onClick={() => setWallpaper({ loop: !wallpaper.loop })} className="rounded-md bg-white/5 px-3 py-1">{wallpaper.loop ? 'Loop' : 'Once'}</button>
               </div>
-              <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-5">
-                <p className="text-sm text-slate-400">Blur intensity</p>
-                <p className="mt-3 text-lg font-medium text-white">{wallpaper.blur}px</p>
-              </div>
-              <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-5">
-                <p className="text-sm text-slate-400">Playback</p>
-                <div className="mt-3 flex items-center gap-3 text-white">
-                  <span>{wallpaper.mute ? 'Muted' : 'Sound on'}</span>
-                  <span className="text-slate-400">•</span>
-                  <span>{wallpaper.loop ? 'Looping' : 'Single'}</span>
+              <div className="mt-2">
+                <label className="text-xs text-slate-300">Clock</label>
+                <div className="mt-1 flex items-center gap-2">
+                  <button onClick={() => setClock24(false)} className={`rounded-md px-2 py-1 ${!clock24 ? 'bg-white/5' : ''}`}>12h</button>
+                  <button onClick={() => setClock24(true)} className={`rounded-md px-2 py-1 ${clock24 ? 'bg-white/5' : ''}`}>24h</button>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div className="mt-6">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium">Quick Dials</h3>
+              <div className="flex items-center gap-2">
+                <input id="qd-title" placeholder="Title" className="rounded-md bg-black/20 px-2 py-1 text-sm" />
+                <input id="qd-url" placeholder="https://example.com" className="rounded-md bg-black/20 px-2 py-1 text-sm" />
+                <button onClick={() => {
+                  const t = (document.getElementById('qd-title') as HTMLInputElement).value || 'Link';
+                  const u = (document.getElementById('qd-url') as HTMLInputElement).value || '';
+                  if (!u) return;
+                  addQuickDial(t, u);
+                  (document.getElementById('qd-title') as HTMLInputElement).value = '';
+                  (document.getElementById('qd-url') as HTMLInputElement).value = '';
+                }} className="rounded-md bg-white/5 px-3 py-1 text-sm">Add</button>
+              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-3 gap-3">
+              {quickDials.map((qd) => (
+                <div key={qd.id} className="rounded-md bg-white/5 p-3">
+                  <div className="flex items-center justify-between">
+                    <a href={qd.url} target="_blank" rel="noreferrer" className="text-sm font-medium">{qd.title}</a>
+                    <button onClick={() => removeQuickDial(qd.id)}>✕</button>
+                  </div>
+                </div>
+              ))}
             </div>
           </div>
         </div>
